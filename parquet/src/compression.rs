@@ -505,6 +505,7 @@ pub use lz4_codec::*;
 mod zstd_codec {
     use crate::compression::{Codec, ZstdLevel};
     use crate::errors::Result;
+    use std::io::Cursor;
 
     /// Codec for Zstandard compression algorithm.
     ///
@@ -541,9 +542,17 @@ mod zstd_codec {
                     .flatten()
                     .unwrap_or(input_buf.len() as u64 * 4) as usize
             });
-            let decompressed = self.decompressor.decompress(input_buf, capacity)?;
-            let len = decompressed.len();
-            output_buf.extend_from_slice(&decompressed);
+            let offset = output_buf.len();
+            output_buf.reserve(capacity);
+            let mut cursor = Cursor::new(&mut *output_buf);
+            cursor.set_position(offset as u64);
+            let len = self
+                .decompressor
+                .decompress_to_buffer(input_buf, &mut cursor)?;
+            if len > capacity {
+                output_buf.truncate(offset);
+                return Err(std::io::Error::other("Decoded page exceeds capacity").into());
+            }
             Ok(len)
         }
 
@@ -556,6 +565,10 @@ mod zstd_codec {
 }
 #[cfg(any(feature = "zstd", test))]
 pub use zstd_codec::*;
+
+#[cfg(all(test, feature = "zstd"))]
+#[path = "compression_zstd_test.rs"]
+mod zstd_append_tests;
 
 /// Represents a valid zstd compression level.
 #[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
